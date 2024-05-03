@@ -150,7 +150,7 @@ func MakeCoordinator(files []string, nReduce int) *Coordinator {
 	return &c
 }
 
-const Timeout = 20 * time.Second
+const Timeout = 15 * time.Second
 
 func jobPhaseMaintainer(c *Coordinator, inputFiles []string) {
 	canExecute := true
