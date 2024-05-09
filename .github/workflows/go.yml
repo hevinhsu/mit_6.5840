@@ -23,3 +23,7 @@ jobs:
       run: |
         cd src/main
         bash test-mr.sh
+    - name: run lab (2) test
+      run: |
+        cd src/kvsrv
+        go test
