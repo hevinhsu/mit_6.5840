@@ -27,3 +27,7 @@ jobs:
       run: |
         cd src/kvsrv
         go test
+    - name: run lab (3A) test
+      run: |
+        cd src/raft
+        go test -run 3A
