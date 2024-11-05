@@ -166,7 +166,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	DPrintf("[serv: %d] [%d] receive voteRequest from %d with term: %d\n", rf.me, rf.currentTerm, args.CandidateId, args.CandidateTerm)
 	defer rf.mu.Unlock()
-	rf.timeout = addRandomTimeoutBetween1000to3000ms()
+	rf.timeout = addRandomTimeoutBetween1500to5000ms()
 
 	// reject the vote if the candidate's term is less than the current term.
 	if args.CandidateTerm < rf.currentTerm {
