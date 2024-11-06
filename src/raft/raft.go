@@ -60,10 +60,11 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// election state machine
-	state        NodeState
-	currentTerm  int
-	timeoutTimer *time.Timer
-	voteFor      int
+	state             NodeState
+	currentTerm       int
+	electionTimeout   *time.Timer
+	heartBeatsTimeout *time.Timer
+	voteFor           int
 }
 
 type NodeState int
@@ -162,12 +163,12 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	DPrintf("[serv: %d] [%d] receive voteRequest from %d with term: %d\n", rf.me, rf.currentTerm, args.CandidateId, args.CandidateTerm)
 	defer rf.mu.Unlock()
-	rf.resetTimer(generateDefaultTimeout())
 
 	// reject the vote if the candidate's term is less than the current term.
 	if args.CandidateTerm < rf.currentTerm {
 		//rf.currentTerm = args.candidateTerm
 		//rf.voteFor = args.candidateId
+		rf.resetElectionTimeout(generateElectionTimeout())
 
 		reply.CurrentTerm = rf.currentTerm
 		reply.VoteGranted = false
@@ -177,6 +178,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		//} else if rf.voteFor != -1 {
 	} else if rf.currentTerm == args.CandidateTerm && rf.voteFor != -1 {
 		// already voted for another candidate
+		rf.resetElectionTimeout(generateElectionTimeout())
 		reply.CurrentTerm = rf.currentTerm
 		reply.VoteGranted = false
 		return
@@ -273,7 +275,7 @@ func (rf *Raft) ticker() {
 		// Check if a leader election should be started.
 
 		select {
-		case <-rf.timeoutTimer.C:
+		case <-rf.electionTimeout.C:
 			if rf.state == Follower {
 				rf.mu.Lock()
 				rf.changeToCandidate()
@@ -288,6 +290,16 @@ func (rf *Raft) ticker() {
 			} else {
 				panic("Invalid state")
 			}
+		case <-rf.heartBeatsTimeout.C:
+			if rf.state != Leader {
+				rf.mu.Lock()
+				if rf.state != Follower {
+					rf.mu.Unlock()
+					continue
+				}
+				rf.mu.Unlock()
+			}
+			rf.broadcastHeartbeat()
 		}
 
 	}
@@ -305,11 +317,12 @@ func (rf *Raft) ticker() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		currentTerm:  0,
-		peers:        peers,
-		persister:    persister,
-		me:           me,
-		timeoutTimer: time.NewTimer(generateDefaultTimeout()),
+		currentTerm:       0,
+		peers:             peers,
+		persister:         persister,
+		me:                me,
+		electionTimeout:   time.NewTimer(generateElectionTimeout()),
+		heartBeatsTimeout: time.NewTimer(generateHeartBeatsTimeout()),
 	}
 
 	rf.changeToFollower()

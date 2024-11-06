@@ -6,20 +6,29 @@ import (
 	"time"
 )
 
-func generateDefaultTimeout() time.Duration {
-	return time.Duration(int(500+(rand.Int63()%4500))) * time.Millisecond
+func generateElectionTimeout() time.Duration {
+	return time.Duration(500+rand.Int()%4500) * time.Millisecond
 }
 
-func (rf *Raft) resetTimer(duration time.Duration) {
-	rf.timeoutTimer.Reset(duration)
+func generateHeartBeatsTimeout() time.Duration {
+	return time.Duration(50+rand.Int()%500) * time.Millisecond
+}
+
+func (rf *Raft) resetElectionTimeout(duration time.Duration) {
+	rf.electionTimeout.Reset(duration)
 }
 
 func (rf *Raft) changeToFollower() {
+	if rf.state == Follower {
+		return
+	}
+
 	DPrintf("[serv: %d] [%d] change to follower\n", rf.me, rf.currentTerm)
 	rf.state = Follower
 	rf.voteFor = None
 	// now the timeout is called Election Timeout
-	rf.resetTimer(generateDefaultTimeout())
+	rf.heartBeatsTimeout.Stop()
+	rf.resetElectionTimeout(generateElectionTimeout())
 }
 
 func (rf *Raft) changeToCandidate() {
@@ -35,6 +44,68 @@ func (rf *Raft) changeToLeader() {
 	DPrintf("[serv: %d] [%d] change to leader\n", rf.me, rf.currentTerm)
 	rf.state = Leader
 	rf.voteFor = None
+	rf.ResetHeartbeatTimer()
+
+	rf.broadcastHeartbeat()
+}
+
+func (rf *Raft) ResetHeartbeatTimer() {
+	rf.heartBeatsTimeout.Reset(generateHeartBeatsTimeout())
+}
+
+type RequestHeartbeatArgs struct {
+	Term int
+}
+
+type RequestHeartbeatReply struct {
+}
+
+func (rf *Raft) RequestHeartbeat(args *RequestHeartbeatArgs, reply *RequestHeartbeatReply) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	if args.Term < rf.currentTerm {
+		rf.resetElectionTimeout(generateElectionTimeout())
+		return
+	}
+
+	if args.Term > rf.currentTerm {
+		rf.currentTerm = args.Term
+		rf.changeToFollower()
+		return
+	}
+}
+
+func (rf *Raft) sendRequestHeartbeat(server int, args *RequestHeartbeatArgs, reply *RequestHeartbeatReply) bool {
+	ok := rf.peers[server].Call("Raft.RequestHeartbeat", args, reply)
+	return ok
+}
+
+func (rf *Raft) broadcastHeartbeat() {
+	if rf.state != Leader {
+		rf.mu.Lock()
+		defer rf.mu.Unlock()
+		if rf.state != Leader {
+			return
+		}
+	}
+
+	for peer := range rf.peers {
+		if peer == rf.me {
+			continue
+		}
+		go func(peer int) {
+			rpcRequest := RequestHeartbeatArgs{
+				Term: rf.currentTerm,
+			}
+			rpcResponse := RequestHeartbeatReply{}
+			if !rf.sendRequestHeartbeat(peer, &rpcRequest, &rpcResponse) {
+				DPrintf("[serv: %d] [%d] send heartbeat to %d failed\n", rf.me, rf.currentTerm, peer)
+				return
+			}
+		}(peer)
+	}
+	rf.ResetHeartbeatTimer()
 }
 
 func (rf *Raft) startElection() {
@@ -43,7 +114,7 @@ func (rf *Raft) startElection() {
 	DPrintf("[serv: %d] [%d] start election\n", rf.me, rf.currentTerm)
 	var voteCount uint32 = 1
 
-	rf.resetTimer(generateDefaultTimeout())
+	rf.resetElectionTimeout(generateElectionTimeout())
 	rf.voteFor = rf.me
 
 	DPrintf("[serv: %d] [%d] send voteRequest with term: %d\n", rf.me, rf.currentTerm, rf.currentTerm)
