@@ -18,8 +18,6 @@ package raft
 //
 
 import (
-	//	"bytes"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -62,10 +60,10 @@ type Raft struct {
 	// state a Raft server must maintain.
 
 	// election state machine
-	state       NodeState
-	currentTerm int
-	timeout     time.Time
-	voteFor     int
+	state        NodeState
+	currentTerm  int
+	timeoutTimer *time.Timer
+	voteFor      int
 }
 
 type NodeState int
@@ -110,7 +108,6 @@ func (rf *Raft) persist() {
 	// rf.persister.Save(raftstate, nil)
 }
 
-
 // restore previously persisted state.
 func (rf *Raft) readPersist(data []byte) {
 	if data == nil || len(data) < 1 { // bootstrap without any state?
@@ -130,7 +127,6 @@ func (rf *Raft) readPersist(data []byte) {
 	//   rf.yyy = yyy
 	// }
 }
-
 
 // the service says it has created a snapshot that has
 // all info up to and including index. this means the
@@ -166,7 +162,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	DPrintf("[serv: %d] [%d] receive voteRequest from %d with term: %d\n", rf.me, rf.currentTerm, args.CandidateId, args.CandidateTerm)
 	defer rf.mu.Unlock()
-	rf.timeout = addRandomTimeoutBetween1500to5000ms()
+	rf.resetTimer(generateDefaultTimeout())
 
 	// reject the vote if the candidate's term is less than the current term.
 	if args.CandidateTerm < rf.currentTerm {
@@ -229,7 +225,6 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 	return ok
 }
 
-
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
 // server isn't the leader, returns false. otherwise start the
@@ -248,7 +243,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 	isLeader := true
 
 	// Your code here (3B).
-
 
 	return index, term, isLeader
 }
@@ -277,7 +271,9 @@ func (rf *Raft) ticker() {
 
 		// Your code here (3A)
 		// Check if a leader election should be started.
-		for time.Now().After(rf.timeout) {
+
+		select {
+		case <-rf.timeoutTimer.C:
 			if rf.state == Follower {
 				rf.mu.Lock()
 				rf.changeToCandidate()
@@ -294,10 +290,6 @@ func (rf *Raft) ticker() {
 			}
 		}
 
-		// pause for a random amount of time between 50 and 350
-		// milliseconds.
-		ms := 50 + (rand.Int63() % 300)
-		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 }
 
@@ -313,11 +305,12 @@ func (rf *Raft) ticker() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		currentTerm: 0,
+		currentTerm:  0,
+		peers:        peers,
+		persister:    persister,
+		me:           me,
+		timeoutTimer: time.NewTimer(generateDefaultTimeout()),
 	}
-	rf.peers = peers
-	rf.persister = persister
-	rf.me = me
 
 	rf.changeToFollower()
 
@@ -328,7 +321,6 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
-
 
 	return rf
 }

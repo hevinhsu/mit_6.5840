@@ -6,8 +6,12 @@ import (
 	"time"
 )
 
-func addRandomTimeoutBetween1500to5000ms() time.Time {
-	return time.Now().Add(time.Duration(int(1500+(rand.Int63()%3500))) * time.Millisecond)
+func generateDefaultTimeout() time.Duration {
+	return time.Duration(int(500+(rand.Int63()%4500))) * time.Millisecond
+}
+
+func (rf *Raft) resetTimer(duration time.Duration) {
+	rf.timeoutTimer.Reset(duration)
 }
 
 func (rf *Raft) changeToFollower() {
@@ -15,7 +19,7 @@ func (rf *Raft) changeToFollower() {
 	rf.state = Follower
 	rf.voteFor = None
 	// now the timeout is called Election Timeout
-	rf.timeout = addRandomTimeoutBetween1500to5000ms()
+	rf.resetTimer(generateDefaultTimeout())
 }
 
 func (rf *Raft) changeToCandidate() {
@@ -39,7 +43,7 @@ func (rf *Raft) startElection() {
 	DPrintf("[serv: %d] [%d] start election\n", rf.me, rf.currentTerm)
 	var voteCount uint32 = 1
 
-	rf.timeout = addRandomTimeoutBetween1500to5000ms()
+	rf.resetTimer(generateDefaultTimeout())
 	rf.voteFor = rf.me
 
 	DPrintf("[serv: %d] [%d] send voteRequest with term: %d\n", rf.me, rf.currentTerm, rf.currentTerm)
