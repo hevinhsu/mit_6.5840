@@ -44,6 +44,7 @@ func (rf *Raft) changeToLeader() {
 	DPrintf("[serv: %d] [%d] change to leader\n", rf.me, rf.currentTerm)
 	rf.state = Leader
 	rf.voteFor = None
+	rf.electionTimeout.Stop()
 	rf.ResetHeartbeatTimer()
 
 	rf.broadcastHeartbeat()
