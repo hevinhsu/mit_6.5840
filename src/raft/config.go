@@ -380,6 +380,7 @@ func (cfg *config) disconnect(i int) {
 	// fmt.Printf("disconnect(%d)\n", i)
 
 	cfg.connected[i] = false
+	fmt.Println("[Network Internal] disconnecting server ", i)
 
 	// outgoing ClientEnds
 	for j := 0; j < cfg.n; j++ {

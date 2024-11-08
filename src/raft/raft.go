@@ -70,7 +70,8 @@ type Raft struct {
 type NodeState int
 
 const (
-	Follower NodeState = iota
+	Init NodeState = iota
+	Follower
 	Candidate
 	Leader
 )
@@ -85,9 +86,9 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your code here (3A).
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 	term = rf.currentTerm
 	isleader = rf.state == Leader
+	rf.mu.Unlock()
 	return term, isleader
 }
 
@@ -160,38 +161,35 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// Your code here (3A, 3B).
 
 	// 3A
-	rf.mu.Lock()
-	DPrintf("[serv: %d] [%d] receive voteRequest from %d with term: %d\n", rf.me, rf.currentTerm, args.CandidateId, args.CandidateTerm)
-	defer rf.mu.Unlock()
+	raftStateSnapshot := cloneState(rf)
 
 	// reject the vote if the candidate's term is less than the current term.
-	if args.CandidateTerm < rf.currentTerm {
+	if args.CandidateTerm < raftStateSnapshot.CurrentTerm {
 		//rf.currentTerm = args.candidateTerm
 		//rf.voteFor = args.candidateId
 		rf.resetElectionTimeout(generateElectionTimeout())
 
-		reply.CurrentTerm = rf.currentTerm
+		reply.CurrentTerm = raftStateSnapshot.CurrentTerm
 		reply.VoteGranted = false
+		DPrintf("reject voteRequest from %d with term: %d\n", raftStateSnapshot, args.CandidateId, args.CandidateTerm)
 		return
 		// this is not work when rf.currentTerm < args.CandidateTerm,
 		// server will become follower and vote for the candidate.
 		//} else if rf.voteFor != -1 {
-	} else if rf.currentTerm == args.CandidateTerm && rf.voteFor != -1 {
+	} else if raftStateSnapshot.CurrentTerm == args.CandidateTerm && raftStateSnapshot.VoteFor != -1 {
 		// already voted for another candidate
 		rf.resetElectionTimeout(generateElectionTimeout())
-		reply.CurrentTerm = rf.currentTerm
+		reply.CurrentTerm = raftStateSnapshot.CurrentTerm
 		reply.VoteGranted = false
+		DPrintf("reject voteRequest from %d with term: %d\n", raftStateSnapshot, args.CandidateId, args.CandidateTerm)
 		return
 	}
 
 	// can vote
-	rf.currentTerm = args.CandidateTerm
-	rf.voteFor = args.CandidateId
 	reply.VoteGranted = true
-	reply.CurrentTerm = rf.currentTerm
-	if rf.state != Follower {
-		rf.changeToFollower()
-	}
+	reply.CurrentTerm = args.CandidateTerm
+	rf.changeToFollower(args.CandidateTerm, args.CandidateId)
+	DPrintf("agree voteRequest from %d with term: %d\n", raftStateSnapshot, args.CandidateId, args.CandidateTerm)
 	return
 }
 
@@ -276,27 +274,17 @@ func (rf *Raft) ticker() {
 
 		select {
 		case <-rf.electionTimeout.C:
-			if rf.state == Follower {
+			raftStateSnapshot := cloneState(rf)
+
+			if raftStateSnapshot.State == Follower || raftStateSnapshot.State == Candidate {
+				DPrintf("election timeout\n", raftStateSnapshot)
 				rf.changeToCandidate()
-			} else if rf.state == Candidate {
-				rf.mu.Lock()
-				// No leader has been elected yet. start a new election.
-				rf.startElection()
-				rf.mu.Unlock()
-			} else if rf.state == Leader {
+			} else if raftStateSnapshot.State == Leader {
 				// do nothing
 			} else {
 				panic("Invalid state")
 			}
 		case <-rf.heartBeatsTimeout.C:
-			if rf.state != Leader {
-				rf.mu.Lock()
-				if rf.state != Follower {
-					rf.mu.Unlock()
-					continue
-				}
-				rf.mu.Unlock()
-			}
 			rf.broadcastHeartbeat()
 		}
 
@@ -315,7 +303,6 @@ func (rf *Raft) ticker() {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *Persister, applyCh chan ApplyMsg) *Raft {
 	rf := &Raft{
-		currentTerm:       0,
 		peers:             peers,
 		persister:         persister,
 		me:                me,
@@ -323,7 +310,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		heartBeatsTimeout: time.NewTimer(generateHeartBeatsTimeout()),
 	}
 
-	rf.changeToFollower()
+	rf.changeToFollower(0, None)
 
 	// Your initialization code here (3A, 3B, 3C).
 
@@ -332,6 +319,17 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// start ticker goroutine to start elections
 	go rf.ticker()
+
+	if Debug {
+
+		go func() {
+			for {
+				time.Sleep(5 * time.Second)
+				raftStateSnapshot := cloneState(rf)
+				DPrintf("monitor: ", raftStateSnapshot)
+			}
+		}()
+	}
 
 	return rf
 }
