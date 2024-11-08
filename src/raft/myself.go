@@ -32,12 +32,16 @@ func (rf *Raft) changeToFollower() {
 }
 
 func (rf *Raft) changeToCandidate() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	DPrintf("[serv: %d] [%d] change to candidate\n", rf.me, rf.currentTerm)
 	rf.state = Candidate
 	rf.startElection()
 }
 
 func (rf *Raft) changeToLeader() {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
 	if rf.state == Leader {
 		return
 	}
@@ -96,12 +100,16 @@ func (rf *Raft) broadcastHeartbeat() {
 			continue
 		}
 		go func(peer int) {
+			rf.mu.Lock()
 			rpcRequest := RequestHeartbeatArgs{
 				Term: rf.currentTerm,
 			}
+			rf.mu.Unlock()
 			rpcResponse := RequestHeartbeatReply{}
 			if !rf.sendRequestHeartbeat(peer, &rpcRequest, &rpcResponse) {
+				rf.mu.Lock()
 				DPrintf("[serv: %d] [%d] send heartbeat to %d failed\n", rf.me, rf.currentTerm, peer)
+				rf.mu.Unlock()
 				return
 			}
 		}(peer)
@@ -127,18 +135,24 @@ func (rf *Raft) startElection() {
 
 		// send voteRequest to each node
 		go func(peer int) {
+			rf.mu.Lock()
 			rpcRequest := RequestVoteArgs{
 				CandidateTerm: rf.currentTerm,
 				CandidateId:   rf.me,
 			}
+			rf.mu.Unlock()
 			rpcResponse := RequestVoteReply{}
 
 			if !rf.sendRequestVote(peer, &rpcRequest, &rpcResponse) {
+				rf.mu.Lock()
 				DPrintf("[serv: %d] [%d] send voteRequest to %d failed\n", rf.me, rf.currentTerm, peer)
+				rf.mu.Unlock()
 				return
 			}
-
-			if rpcResponse.CurrentTerm == rf.currentTerm {
+			rf.mu.Lock()
+			currentTerm := rf.currentTerm
+			rf.mu.Unlock()
+			if rpcResponse.CurrentTerm == currentTerm {
 				if rpcResponse.VoteGranted {
 					atomic.AddUint32(&voteCount, 1)
 					if int(atomic.LoadUint32(&voteCount)) > len(rf.peers)/2 {
@@ -146,10 +160,10 @@ func (rf *Raft) startElection() {
 					}
 				}
 				return
-			} else if rpcResponse.CurrentTerm > rf.currentTerm {
+			} else if rpcResponse.CurrentTerm > currentTerm {
 				// your term is outdated, become follower
 				// reply.Term must not be less than rf.currentTerm
-				DPrintf("[serv: %d] [%d] received term: %d from serv: %d. outdated term, become follower\n", rf.me, rf.currentTerm, rpcResponse.CurrentTerm, peer)
+				DPrintf("[serv: %d] [%d] received term: %d from serv: %d. outdated term, become follower\n", rf.me, currentTerm, rpcResponse.CurrentTerm, peer)
 				rf.currentTerm = rpcResponse.CurrentTerm
 				rf.changeToFollower()
 				return

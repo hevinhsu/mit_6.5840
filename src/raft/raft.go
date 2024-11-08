@@ -277,9 +277,7 @@ func (rf *Raft) ticker() {
 		select {
 		case <-rf.electionTimeout.C:
 			if rf.state == Follower {
-				rf.mu.Lock()
 				rf.changeToCandidate()
-				rf.mu.Unlock()
 			} else if rf.state == Candidate {
 				rf.mu.Lock()
 				// No leader has been elected yet. start a new election.
